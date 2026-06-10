@@ -11,8 +11,8 @@
 ## 🚀 极速启动
 如果你的系统已配置好Node.js环境，只需在终端依次执行以下4条命令，即可一键启动本地看盘环境：
 ```bash
-git clone https://github.com/你的用户名/你的仓库名.git
-cd 你的仓库名
+git clone https://github.com/qq93073884-arch/hejianwen.git
+cd hejianwen
 npm install
 npm run dev
 ```
