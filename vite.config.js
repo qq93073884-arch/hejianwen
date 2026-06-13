@@ -8,8 +8,7 @@ export default defineConfig({
     obfuscatorPlugin({
       include: ['src/**/*.jsx', 'src/**/*.js'],
       exclude: [/node_modules/],
-      apply: 'build', // 关键：只在 build 打包时才混淆，平时 dev 开发不混淆
-      debugger: true,
+      apply: 'build',
       options: {
         compact: true, // 极致压缩
         controlFlowFlattening: true, // 打乱代码执行顺序（防盗神技）

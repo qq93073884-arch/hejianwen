@@ -4,6 +4,29 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- 内容安全策略：只允许加载已知来源，阻止未授权的第三方脚本注入 -->
+    <meta http-equiv="Content-Security-Policy" content="
+      default-src 'self';
+      script-src 'self' 'unsafe-inline' 'unsafe-eval';
+      style-src 'self' 'unsafe-inline';
+      img-src 'self' data: blob: https:;
+      connect-src 'self'
+        https://api.binance.com
+        https://api.hyperliquid.xyz
+        https://realtime.ably.io
+        wss://realtime.ably.io
+        https://*.ably.io
+        wss://*.ably.io
+        https://generativelanguage.googleapis.com
+        https://api.openai.com
+        https://api.anthropic.com
+        https://api.deepseek.com;
+      font-src 'self';
+      object-src 'none';
+      base-uri 'self';
+      form-action 'self';
+    " />
+    <meta name="referrer" content="no-referrer" />
     <title>star-crypto</title>
   </head>
   <body>
