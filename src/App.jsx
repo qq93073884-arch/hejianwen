@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import Ably from 'ably';
+import { createChart, CrosshairMode, LineStyle } from 'lightweight-charts';
+import html2canvas from 'html2canvas';
 import { 
   Activity, 
   Search, 
@@ -35,7 +38,7 @@ import {
 // ==========================================
 // 🚀 ABLY 弹幕系统配置
 // ==========================================
-const ABLY_API_KEY = '保密，自行注册'; 
+const ABLY_API_KEY = import.meta.env.VITE_ABLY_API_KEY || '';
 
 const DEFAULT_COINS = [
   'BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'BNBUSDT', 
@@ -563,8 +566,14 @@ export default function App() {
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [aiReportContent, setAiReportContent] = useState(null);
   const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('star_gemini_api_key') || '');
+  const [claudeApiKey, setClaudeApiKey] = useState(() => localStorage.getItem('star_claude_api_key') || '');
+  const [openaiApiKey, setOpenaiApiKey] = useState(() => localStorage.getItem('star_openai_api_key') || '');
+  const [deepseekApiKey, setDeepseekApiKey] = useState(() => localStorage.getItem('star_deepseek_api_key') || '');
+  const [selectedAiProvider, setSelectedAiProvider] = useState(() => localStorage.getItem('star_ai_provider') || 'gemini');
   const [isEditingApiKey, setIsEditingApiKey] = useState(false);
   const [tempApiKey, setTempApiKey] = useState('');
+  const [aiReasoningContent, setAiReasoningContent] = useState(null);
+  const [showReasoning, setShowReasoning] = useState(false);
 
   const [tooltipData, setTooltipData] = useState(null);
 
@@ -627,63 +636,44 @@ export default function App() {
   }, [danmakuHistory, isHistoryOpen]);
 
   useEffect(() => {
-    if (!ABLY_API_KEY) return; 
+    if (!ABLY_API_KEY) return;
     let ablyInstance = null;
     let channelInstance = null;
-    const initAbly = () => {
-      if (!window.Ably) return;
-      try {
-        ablyInstance = new window.Ably.Realtime({ key: ABLY_API_KEY });
-        channelInstance = ablyInstance.channels.get('star-crypto-danmaku');
-        ablyChannelRef.current = channelInstance;
+    try {
+      ablyInstance = new Ably.Realtime({ key: ABLY_API_KEY });
+      channelInstance = ablyInstance.channels.get('star-crypto-danmaku');
+      ablyChannelRef.current = channelInstance;
 
-        channelInstance.history({ limit: 200 }, (err, resultPage) => {
-          if (err) return;
-          const pastMsgs = resultPage.items.map(msg => ({
-            id: msg.id || Date.now() + Math.random(),
-            text: String(msg.data.text),
-            color: String(msg.data.color),
-            top: msg.data.top,
-            region: String(msg.data.region || '神秘节点'),
-            timestamp: msg.data.timestamp || msg.timestamp || Date.now(),
-          })).reverse();
-          setDanmakuHistory(pastMsgs);
-        });
+      channelInstance.history({ limit: 200 }, (err, resultPage) => {
+        if (err) return;
+        const pastMsgs = resultPage.items.map(msg => ({
+          id: msg.id || Date.now() + Math.random(),
+          text: String(msg.data.text),
+          color: String(msg.data.color),
+          top: msg.data.top,
+          region: String(msg.data.region || '神秘节点'),
+          timestamp: msg.data.timestamp || msg.timestamp || Date.now(),
+        })).reverse();
+        setDanmakuHistory(pastMsgs);
+      });
 
-        channelInstance.subscribe('new-danmaku', (message) => {
-          const newDanmaku = {
-            id: message.id || Date.now() + Math.random(),
-            text: String(message.data.text),
-            color: String(message.data.color),
-            top: message.data.top,
-            region: String(message.data.region || '神秘节点'),
-            timestamp: message.data.timestamp || Date.now(),
-          };
-          setDanmakus((prev) => [...prev, newDanmaku]);
-          setDanmakuHistory((prev) => [...prev, newDanmaku].slice(-200));
-          setTimeout(() => {
-            setDanmakus((prev) => prev.filter((d) => d.id !== newDanmaku.id));
-          }, 8000);
-        });
-      } catch (e) {}
-    };
+      channelInstance.subscribe('new-danmaku', (message) => {
+        const newDanmaku = {
+          id: message.id || Date.now() + Math.random(),
+          text: String(message.data.text),
+          color: String(message.data.color),
+          top: message.data.top,
+          region: String(message.data.region || '神秘节点'),
+          timestamp: message.data.timestamp || Date.now(),
+        };
+        setDanmakus((prev) => [...prev, newDanmaku]);
+        setDanmakuHistory((prev) => [...prev, newDanmaku].slice(-200));
+        setTimeout(() => {
+          setDanmakus((prev) => prev.filter((d) => d.id !== newDanmaku.id));
+        }, 8000);
+      });
+    } catch (e) {}
 
-    if (!window.Ably) {
-      const scriptId = 'ably-cdn-script';
-      let script = document.getElementById(scriptId);
-      if (!script) {
-        script = document.createElement('script');
-        script.id = scriptId;
-        script.src = 'https://cdn.ably.com/lib/ably.min-1.js';
-        script.async = true;
-        script.onload = initAbly;
-        document.head.appendChild(script);
-      } else {
-        script.addEventListener('load', initAbly);
-      }
-    } else {
-      initAbly();
-    }
     return () => {
       if (channelInstance) channelInstance.unsubscribe();
       if (ablyInstance) ablyInstance.close();
@@ -2309,17 +2299,10 @@ export default function App() {
     setIsGeneratingMacro(true);
     setMacroPosterData({ data: coinData, aiContent });
     try {
-      if (!window.html2canvas) {
-        await new Promise((resolve, reject) => {
-          const script = document.createElement('script');
-          script.src = 'https://html2canvas.hertzen.com/dist/html2canvas.min.js';
-          script.onload = resolve; script.onerror = reject; document.head.appendChild(script);
-        });
-      }
       await new Promise(r => setTimeout(r, 200));
       const targetDom = document.getElementById('macro-poster-canvas');
       if (targetDom) {
-        const canvas = await window.html2canvas(targetDom, { scale: 2, backgroundColor: '#030712', useCORS: true, logging: false });
+        const canvas = await html2canvas(targetDom, { scale: 2, backgroundColor: '#030712', useCORS: true, logging: false });
         setPosterDataUrl(canvas.toDataURL('image/jpeg', 0.95));
       }
     } catch (e) {} finally { setIsGeneratingMacro(false); }
@@ -2330,17 +2313,10 @@ export default function App() {
     setIsGeneratingMicro(true);
     setMicroPosterData(coinData);
     try {
-      if (!window.html2canvas) {
-        await new Promise((resolve, reject) => {
-          const script = document.createElement('script');
-          script.src = 'https://html2canvas.hertzen.com/dist/html2canvas.min.js';
-          script.onload = resolve; script.onerror = reject; document.head.appendChild(script);
-        });
-      }
-      await new Promise(r => setTimeout(r, 200)); 
+      await new Promise(r => setTimeout(r, 200));
       const targetDom = document.getElementById('micro-poster-canvas');
       if (targetDom) {
-        const canvas = await window.html2canvas(targetDom, { scale: 2.5, backgroundColor: 'transparent', useCORS: true, logging: false });
+        const canvas = await html2canvas(targetDom, { scale: 2.5, backgroundColor: 'transparent', useCORS: true, logging: false });
         setPosterDataUrl(canvas.toDataURL('image/jpeg', 0.95));
       }
     } catch (e) {} finally { setIsGeneratingMicro(false); setMicroPosterData(null); }
@@ -2353,38 +2329,113 @@ export default function App() {
     return text.split('\n').filter(l => l.trim() !== '').pop().replace(/[*#-]/g, '').trim();
   };
 
+  const AI_PROVIDERS = {
+    gemini:   { label: 'Gemini',   color: 'indigo', model: 'gemini-2.5-flash' },
+    chatgpt:  { label: 'ChatGPT',  color: 'green',  model: 'gpt-4o' },
+    claude:   { label: 'Claude',   color: 'orange', model: 'claude-opus-4-5' },
+    deepseek: { label: 'DeepSeek', color: 'cyan',   model: 'deepseek-v4-pro' },
+  };
+
+  const getCurrentApiKey = () => {
+    if (selectedAiProvider === 'gemini')   return geminiApiKey;
+    if (selectedAiProvider === 'chatgpt')  return openaiApiKey;
+    if (selectedAiProvider === 'claude')   return claudeApiKey;
+    if (selectedAiProvider === 'deepseek') return deepseekApiKey;
+    return '';
+  };
+
+  const saveCurrentApiKey = (key) => {
+    if (selectedAiProvider === 'gemini')   { setGeminiApiKey(key);   localStorage.setItem('star_gemini_api_key', key); }
+    if (selectedAiProvider === 'chatgpt')  { setOpenaiApiKey(key);   localStorage.setItem('star_openai_api_key', key); }
+    if (selectedAiProvider === 'claude')   { setClaudeApiKey(key);   localStorage.setItem('star_claude_api_key', key); }
+    if (selectedAiProvider === 'deepseek') { setDeepseekApiKey(key); localStorage.setItem('star_deepseek_api_key', key); }
+  };
+
   const generateAIReport = async (coinData) => {
-    if (!geminiApiKey) { setAiReportContent("⚠️ 请先配置 Gemini API Key。"); return; }
+    const currentKey = getCurrentApiKey();
+    if (!currentKey) { setAiReportContent(`⚠️ 请先配置 ${AI_PROVIDERS[selectedAiProvider].label} API Key。`); return; }
     setIsGeneratingReport(true);
     setAiReportContent(null);
+    setAiReasoningContent(null);
+    setShowReasoning(false);
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`;
     const systemPrompt = `你是一个全球顶级的加密货币量化交易员和数据分析师，风格毒辣、精准、绝对客观、排除主观情绪。请根据提供的实时量化快照数据，输出一份【星辰 AI 深度推演报告】... (见文档)`;
     const userData = JSON.stringify({
       symbol: coinData.actualSymbol, currentPrice: coinData.currentPrice, score: coinData.score,
       marketEnv: marketEnv ? marketEnv.trend : '未知', metrics: coinData.metrics, plan: coinData.plan,
       mcResults: coinData.mcResults, buyWall: coinData.buyWall, signals: coinData.signals.map(s => s.text)
     });
+    const userMessage = `请分析：\n${userData}`;
 
-    const payload = { contents: [{ parts: [{ text: `请分析：\n${userData}` }] }], systemInstruction: { parts: [{ text: systemPrompt }] } };
-
-    const fetchWithRetry = async (retries = 5, delay = 1000) => {
+    const withRetry = async (fn, retries = 5, delay = 1000) => {
       for (let i = 0; i < retries; i++) {
-        try {
-          const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-          if (!res.ok) throw new Error('API Error');
-          const result = await res.json();
-          return result.candidates?.[0]?.content?.parts?.[0]?.text || "暂无结论。";
-        } catch (err) {
+        try { return await fn(); }
+        catch (err) {
           if (i === retries - 1) throw err;
-          await new Promise(r => setTimeout(r, delay)); delay *= 2; 
+          await new Promise(r => setTimeout(r, delay)); delay *= 2;
         }
       }
     };
 
+    const callGemini = () => withRetry(async () => {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${currentKey}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ contents: [{ parts: [{ text: userMessage }] }], systemInstruction: { parts: [{ text: systemPrompt }] } }) }
+      );
+      if (!res.ok) throw new Error(`Gemini API Error ${res.status}`);
+      const data = await res.json();
+      return { content: data.candidates?.[0]?.content?.parts?.[0]?.text || '暂无结论。' };
+    });
+
+    const callOpenAI = () => withRetry(async () => {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentKey}` },
+        body: JSON.stringify({ model: 'gpt-4o', messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessage }] })
+      });
+      if (!res.ok) throw new Error(`OpenAI API Error ${res.status}`);
+      const data = await res.json();
+      return { content: data.choices?.[0]?.message?.content || '暂无结论。' };
+    });
+
+    const callClaude = () => withRetry(async () => {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': currentKey, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: 'claude-opus-4-5', max_tokens: 4096, system: systemPrompt, messages: [{ role: 'user', content: userMessage }] })
+      });
+      if (!res.ok) throw new Error(`Claude API Error ${res.status}`);
+      const data = await res.json();
+      return { content: data.content?.[0]?.text || '暂无结论。' };
+    });
+
+    const callDeepSeek = () => withRetry(async () => {
+      const res = await fetch('https://api.deepseek.com/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentKey}` },
+        body: JSON.stringify({
+          model: 'deepseek-v4-pro',
+          messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userMessage }],
+          reasoning_effort: 'high',
+          thinking: { type: 'enabled' },
+          stream: false,
+        })
+      });
+      if (!res.ok) throw new Error(`DeepSeek API Error ${res.status}`);
+      const data = await res.json();
+      const msg = data.choices?.[0]?.message;
+      return {
+        content: msg?.content || '暂无结论。',
+        reasoning: msg?.thinking || msg?.reasoning_content || null,
+      };
+    });
+
     try {
-      const text = await fetchWithRetry();
-      setAiReportContent(text);
+      const dispatchMap = { gemini: callGemini, chatgpt: callOpenAI, claude: callClaude, deepseek: callDeepSeek };
+      const result = await dispatchMap[selectedAiProvider]();
+      setAiReportContent(result.content);
+      if (result.reasoning) setAiReasoningContent(result.reasoning);
     } catch (err) {
       setAiReportContent("⚠️ 星际网络受阻，请稍后再试。");
     } finally {
@@ -2589,68 +2640,56 @@ export default function App() {
     useEffect(() => {
       if (!chartContainerRef.current || !data) return;
       let chart; let resizeHandler;
-      const renderChart = () => {
-        if (!window.LightweightCharts || !chartContainerRef.current) return;
-        chartContainerRef.current.innerHTML = '';
-        chart = window.LightweightCharts.createChart(chartContainerRef.current, {
-          layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc' },
-          grid: { vertLines: { color: 'rgba(42, 46, 57, 0.5)' }, horzLines: { color: 'rgba(42, 46, 57, 0.5)' } },
-          rightPriceScale: { borderColor: 'rgba(197, 203, 206, 0.8)' },
-          timeScale: { borderColor: 'rgba(197, 203, 206, 0.8)', timeVisible: true },
-          crosshair: { mode: 0 },
-        });
+      chartContainerRef.current.innerHTML = '';
+      chart = createChart(chartContainerRef.current, {
+        layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc' },
+        grid: { vertLines: { color: 'rgba(42, 46, 57, 0.5)' }, horzLines: { color: 'rgba(42, 46, 57, 0.5)' } },
+        rightPriceScale: { borderColor: 'rgba(197, 203, 206, 0.8)' },
+        timeScale: { borderColor: 'rgba(197, 203, 206, 0.8)', timeVisible: true },
+        crosshair: { mode: CrosshairMode.Normal },
+      });
 
-        const candlestickSeries = chart.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
-        candlestickSeries.setData(data);
+      const candlestickSeries = chart.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false, wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
+      candlestickSeries.setData(data);
 
-        if (coinInfo && coinInfo.tdData) {
-           const markers = [];
-           coinInfo.tdData.forEach((td, i) => {
-              if (td.tdCount >= 6 && data[i]) {
-                 markers.push({
-                    time: data[i].time,
-                    position: td.tdType === 'buy' ? 'belowBar' : 'aboveBar',
-                    color: td.tdType === 'buy' ? '#10B981' : '#EF4444',
-                    shape: td.tdType === 'buy' ? 'arrowUp' : 'arrowDown',
-                    text: td.tdCount.toString() + (td.tdCount === 9 && td.isBlocked ? ' 🛑' : '')
-                 });
-              }
-           });
-           candlestickSeries.setMarkers(markers);
+      if (coinInfo && coinInfo.tdData) {
+         const markers = [];
+         coinInfo.tdData.forEach((td, i) => {
+            if (td.tdCount >= 6 && data[i]) {
+               markers.push({
+                  time: data[i].time,
+                  position: td.tdType === 'buy' ? 'belowBar' : 'aboveBar',
+                  color: td.tdType === 'buy' ? '#10B981' : '#EF4444',
+                  shape: td.tdType === 'buy' ? 'arrowUp' : 'arrowDown',
+                  text: td.tdCount.toString() + (td.tdCount === 9 && td.isBlocked ? ' 🛑' : '')
+               });
+            }
+         });
+         candlestickSeries.setMarkers(markers);
+      }
+
+      if (showHeatmap && coinInfo && coinInfo.liqClusters) {
+         coinInfo.liqClusters.forEach(cluster => {
+            candlestickSeries.createPriceLine({
+               price: cluster.price, color: 'rgba(234, 179, 8, 0.5)', lineWidth: 2, lineStyle: LineStyle.Dashed,
+               axisLabelVisible: true, title: '🔥 50x/100x 爆仓池'
+            });
+         });
+      }
+
+      if (coinInfo && coinInfo.plan) {
+        candlestickSeries.createPriceLine({ price: coinInfo.plan.entryPoint, color: '#06b6d4', lineWidth: 2, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: '计划入场' });
+        candlestickSeries.createPriceLine({ price: coinInfo.plan.stopLoss, color: '#ef4444', lineWidth: 2, lineStyle: LineStyle.Solid, axisLabelVisible: true, title: '严格止损' });
+        candlestickSeries.createPriceLine({ price: coinInfo.plan.target, color: '#fbbf24', lineWidth: 1, lineStyle: LineStyle.SparseDotted, axisLabelVisible: true, title: '目标' });
+        if (coinInfo.plan.smcOB) {
+          candlestickSeries.createPriceLine({ price: coinInfo.plan.smcOB.top, color: 'rgba(244, 63, 94, 0.7)', lineWidth: 1, lineStyle: LineStyle.SparseDotted, axisLabelVisible: false, title: 'OB Sweep' });
+          candlestickSeries.createPriceLine({ price: coinInfo.plan.smcOB.bottom, color: 'rgba(244, 63, 94, 0.7)', lineWidth: 1, lineStyle: LineStyle.SparseDotted, axisLabelVisible: false, title: 'OB Sweep' });
         }
+      }
+      chart.timeScale().fitContent();
+      resizeHandler = () => { if (chartContainerRef.current && chart) chart.applyOptions({ width: chartContainerRef.current.clientWidth }); };
+      window.addEventListener('resize', resizeHandler);
 
-        if (showHeatmap && coinInfo && coinInfo.liqClusters) {
-           coinInfo.liqClusters.forEach(cluster => {
-              candlestickSeries.createPriceLine({
-                 price: cluster.price, color: 'rgba(234, 179, 8, 0.5)', lineWidth: 2, lineStyle: 2, 
-                 axisLabelVisible: true, title: '🔥 50x/100x 爆仓池'
-              });
-           });
-        }
-
-        if (coinInfo && coinInfo.plan) {
-          candlestickSeries.createPriceLine({ price: coinInfo.plan.entryPoint, color: '#06b6d4', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: '计划入场' });
-          candlestickSeries.createPriceLine({ price: coinInfo.plan.stopLoss, color: '#ef4444', lineWidth: 2, lineStyle: 1, axisLabelVisible: true, title: '严格止损' });
-          candlestickSeries.createPriceLine({ price: coinInfo.plan.target, color: '#fbbf24', lineWidth: 1, lineStyle: 3, axisLabelVisible: true, title: '目标' });
-          if (coinInfo.plan.smcOB) {
-            candlestickSeries.createPriceLine({ price: coinInfo.plan.smcOB.top, color: 'rgba(244, 63, 94, 0.7)', lineWidth: 1, lineStyle: 3, axisLabelVisible: false, title: 'OB Sweep' });
-            candlestickSeries.createPriceLine({ price: coinInfo.plan.smcOB.bottom, color: 'rgba(244, 63, 94, 0.7)', lineWidth: 1, lineStyle: 3, axisLabelVisible: false, title: 'OB Sweep' });
-          }
-        }
-        chart.timeScale().fitContent();
-        resizeHandler = () => { if (chartContainerRef.current && chart) chart.applyOptions({ width: chartContainerRef.current.clientWidth }); };
-        window.addEventListener('resize', resizeHandler);
-      };
-
-      if (!window.LightweightCharts) {
-        const scriptId = 'lightweight-charts-script';
-        let existingScript = document.getElementById(scriptId);
-        if (!existingScript) {
-          const script = document.createElement('script'); script.id = scriptId;
-          script.src = 'https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js';
-          script.async = true; script.onload = renderChart; document.head.appendChild(script);
-        } else existingScript.addEventListener('load', renderChart);
-      } else renderChart();
       return () => { if (resizeHandler) window.removeEventListener('resize', resizeHandler); if (chart) chart.remove(); };
     }, [data, coinInfo, showHeatmap]);
     return <div ref={chartContainerRef} className="w-full h-full" />;
@@ -3407,7 +3446,7 @@ export default function App() {
                   </span>
                 </div>
               </div>
-              <button onClick={() => { setSelectedCoin(null); setTooltipData(null); setMacroPosterData(null); setAiReportContent(null); setIsGeneratingReport(false); setIsEditingApiKey(false); setShowHeatmap(false); }} className="p-2 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
+              <button onClick={() => { setSelectedCoin(null); setTooltipData(null); setMacroPosterData(null); setAiReportContent(null); setAiReasoningContent(null); setShowReasoning(false); setIsGeneratingReport(false); setIsEditingApiKey(false); setShowHeatmap(false); }} className="p-2 rounded-lg hover:bg-gray-800 text-gray-400 hover:text-white transition-colors"><X className="w-5 h-5" /></button>
             </div>
 
             <div className="flex-1 overflow-y-auto flex flex-col lg:flex-row">
@@ -3423,58 +3462,96 @@ export default function App() {
               {/* 右侧数据与操作面板 */}
               <div className="w-full lg:w-[40%] xl:w-[35%] p-3 sm:p-5 bg-gray-950 space-y-3 sm:space-y-5 overflow-y-auto relative z-20">
                 <div className="bg-gradient-to-br from-indigo-950/40 to-cyan-950/20 border border-indigo-500/30 rounded-xl p-4 shadow-[0_0_15px_rgba(79,70,229,0.1)] relative">
+                  {/* 标题行 */}
                   <div className="flex justify-between items-center mb-3">
                     <h4 className="text-sm font-bold text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-indigo-400 flex items-center gap-1.5">
-                      <Brain className="w-4 h-4 text-indigo-400" /> Gemini 量化投顾大模型
-                      {geminiApiKey && !isGeneratingReport && (
-                        <button onClick={() => { setTempApiKey(geminiApiKey); setIsEditingApiKey(!isEditingApiKey); }} className="ml-1 text-gray-500 hover:text-indigo-400 transition-colors" title="配置 API Key"><span className="text-sm">⚙️</span></button>
+                      <Brain className="w-4 h-4 text-indigo-400" /> AI 量化投顾大模型
+                      {getCurrentApiKey() && !isGeneratingReport && (
+                        <button onClick={() => { setTempApiKey(getCurrentApiKey()); setIsEditingApiKey(!isEditingApiKey); }} className="ml-1 text-gray-500 hover:text-indigo-400 transition-colors" title="配置 API Key"><span className="text-sm">⚙️</span></button>
                       )}
                     </h4>
-                    {(!geminiApiKey || isEditingApiKey) ? null : (
-                      !aiReportContent && !isGeneratingReport && (
-                        <button onClick={() => generateAIReport(selectedCoin)} className="bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/50 text-indigo-300 text-xs px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 font-bold">
-                          <Sparkles className="w-3.5 h-3.5" /> 深度推演
-                        </button>
-                      )
+                    {(getCurrentApiKey() && !isEditingApiKey && !aiReportContent && !isGeneratingReport) && (
+                      <button onClick={() => generateAIReport(selectedCoin)} className="bg-indigo-600/20 hover:bg-indigo-600/40 border border-indigo-500/50 text-indigo-300 text-xs px-3 py-1.5 rounded-lg transition-colors flex items-center gap-1 font-bold">
+                        <Sparkles className="w-3.5 h-3.5" /> 深度推演
+                      </button>
                     )}
                   </div>
-                  
-                  {(!geminiApiKey || isEditingApiKey) && !isGeneratingReport && (
-                    <div className="mb-3 flex items-center gap-2 bg-black/40 p-2 rounded-lg border border-indigo-500/30">
-                      <input type="password" placeholder="在此填入 Gemini API Key..." value={tempApiKey} onChange={(e) => setTempApiKey(e.target.value)} className="flex-1 bg-transparent text-xs text-gray-200 px-2 py-1 focus:outline-none placeholder-gray-600" />
-                      <button onClick={() => { const key = tempApiKey.trim(); setGeminiApiKey(key); localStorage.setItem('star_gemini_api_key', key); setIsEditingApiKey(false); }} className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded transition-colors whitespace-nowrap">保存</button>
-                      {geminiApiKey && isEditingApiKey && <button onClick={() => setIsEditingApiKey(false)} className="text-gray-400 hover:text-white pl-1 pr-2"><X className="w-3 h-3"/></button>}
+
+                  {/* 供应商切换 Tabs */}
+                  {!isGeneratingReport && (
+                    <div className="flex gap-1 mb-3 bg-black/30 p-1 rounded-lg">
+                      {Object.entries(AI_PROVIDERS).map(([key, cfg]) => {
+                        const colorMap = { indigo: 'bg-indigo-600/30 text-indigo-300 border-indigo-500/50', green: 'bg-green-600/30 text-green-300 border-green-500/50', orange: 'bg-orange-600/30 text-orange-300 border-orange-500/50', cyan: 'bg-cyan-600/30 text-cyan-300 border-cyan-500/50' };
+                        const isActive = selectedAiProvider === key;
+                        return (
+                          <button key={key} onClick={() => { setSelectedAiProvider(key); localStorage.setItem('star_ai_provider', key); setIsEditingApiKey(false); setAiReportContent(null); setAiReasoningContent(null); }}
+                            className={`flex-1 text-[10px] font-bold py-1 rounded-md border transition-all ${isActive ? colorMap[cfg.color] : 'text-gray-500 border-transparent hover:text-gray-300'}`}>
+                            {cfg.label}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
 
+                  {/* API Key 输入框 */}
+                  {(!getCurrentApiKey() || isEditingApiKey) && !isGeneratingReport && (
+                    <div className="mb-3 flex items-center gap-2 bg-black/40 p-2 rounded-lg border border-indigo-500/30">
+                      <input type="password" placeholder={`在此填入 ${AI_PROVIDERS[selectedAiProvider].label} API Key...`} value={tempApiKey} onChange={(e) => setTempApiKey(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { saveCurrentApiKey(tempApiKey.trim()); setIsEditingApiKey(false); }}}
+                        className="flex-1 bg-transparent text-xs text-gray-200 px-2 py-1 focus:outline-none placeholder-gray-600" />
+                      <button onClick={() => { saveCurrentApiKey(tempApiKey.trim()); setIsEditingApiKey(false); }} className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded transition-colors whitespace-nowrap">保存</button>
+                      {getCurrentApiKey() && isEditingApiKey && <button onClick={() => setIsEditingApiKey(false)} className="text-gray-400 hover:text-white pl-1 pr-2"><X className="w-3 h-3"/></button>}
+                    </div>
+                  )}
+
+                  {/* 推理中动画 */}
                   {isGeneratingReport && (
                     <div className="py-6 text-center space-y-3">
-                       <div className="relative mx-auto w-12 h-12">
-                         <div className="absolute inset-0 border-2 border-indigo-500/20 rounded-full"></div>
-                         <div className="absolute inset-0 border-2 border-cyan-400 rounded-full border-t-transparent animate-spin"></div>
-                         <Brain className="absolute inset-0 m-auto w-5 h-5 text-indigo-400 animate-pulse" />
-                       </div>
-                       <div className="text-sm text-indigo-300 font-mono animate-pulse">AI 神经网络交叉会诊中...</div>
+                      <div className="relative mx-auto w-12 h-12">
+                        <div className="absolute inset-0 border-2 border-indigo-500/20 rounded-full"></div>
+                        <div className="absolute inset-0 border-2 border-cyan-400 rounded-full border-t-transparent animate-spin"></div>
+                        <Brain className="absolute inset-0 m-auto w-5 h-5 text-indigo-400 animate-pulse" />
+                      </div>
+                      <div className="text-sm text-indigo-300 font-mono animate-pulse">{AI_PROVIDERS[selectedAiProvider].label} 神经网络交叉会诊中...</div>
+                      {selectedAiProvider === 'deepseek' && <div className="text-[10px] text-cyan-500/70 animate-pulse">DeepSeek-R1 深度推理链激活中...</div>}
                     </div>
                   )}
 
-                  {aiReportContent && (
-                    <div className="mt-2 p-3 bg-black/40 rounded-lg border border-indigo-500/20">
-                       {renderMarkdown(aiReportContent)}
-                       <div className="mt-4 pt-3 border-t border-indigo-500/20 flex justify-between items-center">
-                         <button onClick={() => generateMacroPoster(selectedCoin, aiReportContent)} disabled={isGeneratingMacro} className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-bold transition-all ${isGeneratingMacro ? 'bg-cyan-900/50 text-cyan-500 cursor-not-allowed' : 'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/40 border border-cyan-500/30'}`}>
-                           {isGeneratingMacro ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
-                           {isGeneratingMacro ? '正在光刻海报...' : '生成 Alpha 密报卡'}
-                         </button>
-                         <button onClick={() => generateAIReport(selectedCoin)} disabled={isGeneratingReport} className="text-[10px] text-gray-500 hover:text-indigo-400 flex items-center gap-1 transition-colors"><RefreshCw className={`w-3 h-3 ${isGeneratingReport ? 'animate-spin' : ''}`} /> 重新推演</button>
-                       </div>
+                  {/* DeepSeek 推理内容折叠块 */}
+                  {aiReasoningContent && !isGeneratingReport && (
+                    <div className="mb-3">
+                      <button onClick={() => setShowReasoning(r => !r)}
+                        className="w-full flex items-center justify-between text-[10px] text-cyan-600 hover:text-cyan-400 bg-cyan-950/30 border border-cyan-800/40 rounded-lg px-3 py-1.5 transition-colors">
+                        <span className="flex items-center gap-1.5"><Brain className="w-3 h-3" /> DeepSeek 推理链 (Chain-of-Thought)</span>
+                        <span>{showReasoning ? '▲ 收起' : '▼ 展开'}</span>
+                      </button>
+                      {showReasoning && (
+                        <div className="mt-1 p-3 bg-cyan-950/20 border border-cyan-800/30 rounded-lg max-h-48 overflow-y-auto">
+                          <pre className="text-[10px] text-cyan-300/70 whitespace-pre-wrap leading-relaxed font-mono">{aiReasoningContent}</pre>
+                        </div>
+                      )}
                     </div>
                   )}
-                  
+
+                  {/* 报告内容 */}
+                  {aiReportContent && (
+                    <div className="mt-2 p-3 bg-black/40 rounded-lg border border-indigo-500/20">
+                      {renderMarkdown(aiReportContent)}
+                      <div className="mt-4 pt-3 border-t border-indigo-500/20 flex justify-between items-center">
+                        <button onClick={() => generateMacroPoster(selectedCoin, aiReportContent)} disabled={isGeneratingMacro} className={`text-xs px-3 py-1.5 rounded-lg flex items-center gap-1.5 font-bold transition-all ${isGeneratingMacro ? 'bg-cyan-900/50 text-cyan-500 cursor-not-allowed' : 'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/40 border border-cyan-500/30'}`}>
+                          {isGeneratingMacro ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+                          {isGeneratingMacro ? '正在光刻海报...' : '生成 Alpha 密报卡'}
+                        </button>
+                        <button onClick={() => generateAIReport(selectedCoin)} disabled={isGeneratingReport} className="text-[10px] text-gray-500 hover:text-indigo-400 flex items-center gap-1 transition-colors"><RefreshCw className={`w-3 h-3 ${isGeneratingReport ? 'animate-spin' : ''}`} /> 重新推演</button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 底部工具栏（无报告时显示）*/}
                   {!aiReportContent && !isGeneratingReport && (
                     <div className="flex justify-between items-end mt-2">
                       <button onClick={() => setShowHeatmap(!showHeatmap)} className={`text-xs px-3 py-1.5 rounded-lg border transition-all flex items-center gap-1.5 font-bold ${showHeatmap ? 'bg-amber-500/20 text-amber-400 border-amber-500/50 shadow-[0_0_10px_rgba(245,158,11,0.2)]' : 'bg-gray-800/80 text-gray-400 border-gray-700 hover:text-amber-400'}`}>
-                         <Flame className={`w-3.5 h-3.5 ${showHeatmap ? 'animate-pulse text-amber-400' : 'text-gray-500'}`} /> 高杠杆清算热力图 {showHeatmap ? 'ON' : 'OFF'}
+                        <Flame className={`w-3.5 h-3.5 ${showHeatmap ? 'animate-pulse text-amber-400' : 'text-gray-500'}`} /> 高杠杆清算热力图 {showHeatmap ? 'ON' : 'OFF'}
                       </button>
                       <button onClick={() => generateMacroPoster(selectedCoin, null)} disabled={isGeneratingMacro} className="text-[10px] bg-gray-800 hover:bg-gray-700 text-gray-400 hover:text-gray-200 border border-gray-700 px-2 py-1 rounded transition-colors flex items-center gap-1"><Camera className="w-3 h-3" /> 海报</button>
                     </div>
